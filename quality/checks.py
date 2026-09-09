@@ -4,7 +4,7 @@
 типов, перечисленных в методичке. Результат каждой проверки пишется в
 quality_check_log через storage.db.log_quality.
 """
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from storage.db import log_quality
 
 
@@ -66,7 +66,7 @@ def check_freshness(run_id, last_obs_date_str, max_lag_days, table_name):
         last_date = datetime.strptime(last_obs_date_str, "%Y-%m-%d")
     except ValueError:
         last_date = datetime.strptime(last_obs_date_str, "%Y%m%d")
-    lag = (datetime.utcnow() - last_date).days
+    lag = (datetime.now(timezone.utc).replace(tzinfo=None) - last_date).days
     passed = lag <= max_lag_days
     log_quality(run_id, table_name, "freshness", "max_lag_days",
                 passed, f"отставание данных: {lag} дн. (порог {max_lag_days})")

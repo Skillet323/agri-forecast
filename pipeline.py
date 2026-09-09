@@ -16,7 +16,7 @@ storage.db — ключ таблицы уже это поддерживает).
 import json
 import uuid
 import statistics
-from datetime import datetime
+from datetime import datetime, timezone
 
 import pandas as pd
 
@@ -39,7 +39,7 @@ def run():
 
         # NASA POWER
         payload, status = nasa_power.fetch(fid, lat, lon, SEASON_START, SEASON_END)
-        save_raw("raw_nasa_power", fid, datetime.utcnow().isoformat(), payload, status)
+        save_raw("raw_nasa_power", fid, datetime.now(timezone.utc).isoformat(), payload, status)
         try:
             params = payload["properties"]["parameter"]
             n_rows = 0
@@ -51,7 +51,7 @@ def run():
                     "precip": params["PRECTOTCORR"].get(day_key),
                     "radiation": params["ALLSKY_SFC_SW_DWN"].get(day_key),
                     "humidity": params["RH2M"].get(day_key),
-                    "source_status": status, "ingested_at": datetime.utcnow().isoformat(),
+                    "source_status": status, "ingested_at": datetime.now(timezone.utc).isoformat(),
                 }
                 all_weather_rows.append(row)
                 n_rows += 1
@@ -61,7 +61,7 @@ def run():
 
         # SoilGrids
         payload, status = soilgrids.fetch(fid, lat, lon)
-        save_raw("raw_soilgrids", fid, datetime.utcnow().isoformat(), payload, status)
+        save_raw("raw_soilgrids", fid, datetime.now(timezone.utc).isoformat(), payload, status)
         try:
             layers = {l["name"]: l["depths"][0]["values"]["mean"] for l in payload["properties"]["layers"]}
             row = {
@@ -69,7 +69,7 @@ def run():
                 "ph": layers.get("phh2o"), "soc": layers.get("soc"),
                 "clay": layers.get("clay"), "sand": layers.get("sand"),
                 "nitrogen": layers.get("nitrogen"),
-                "source_status": status, "ingested_at": datetime.utcnow().isoformat(),
+                "source_status": status, "ingested_at": datetime.now(timezone.utc).isoformat(),
             }
             all_soil_rows.append(row)
             log_ingestion(run_id, "soilgrids", fid, status, 1)
@@ -78,7 +78,7 @@ def run():
 
         # Sentinel-2 NDVI
         payload, status = sentinel2.fetch(fid, lat, lon, SEASON_START, SEASON_END)
-        save_raw("raw_sentinel2", fid, datetime.utcnow().isoformat(), payload, status)
+        save_raw("raw_sentinel2", fid, datetime.now(timezone.utc).isoformat(), payload, status)
         try:
             n_rows = 0
             for obs in payload["observations"]:
@@ -86,7 +86,7 @@ def run():
                     continue  # облачность -> пропуск, не "нулевое" значение
                 all_ndvi_rows.append({
                     "field_id": fid, "obs_date": obs["date"], "ndvi": obs["ndvi"],
-                    "source_status": status, "ingested_at": datetime.utcnow().isoformat(),
+                    "source_status": status, "ingested_at": datetime.now(timezone.utc).isoformat(),
                 })
                 n_rows += 1
             log_ingestion(run_id, "sentinel2", fid, status, n_rows)
@@ -155,10 +155,10 @@ def run():
             "ph": soil_row["ph"],
         }
         payload, status = yield_bootstrap.fetch(fid, features, season=SEASON_START.year)
-        save_raw("raw_yield_history", fid, datetime.utcnow().isoformat(), payload, status)
+        save_raw("raw_yield_history", fid, datetime.now(timezone.utc).isoformat(), payload, status)
         yield_rows.append({
             "field_id": fid, "season": SEASON_START.year, "yield_t_ha": payload["yield_t_ha"],
-            "source_status": status, "ingested_at": datetime.utcnow().isoformat(),
+            "source_status": status, "ingested_at": datetime.now(timezone.utc).isoformat(),
         })
         log_ingestion(run_id, "yield_bootstrap", fid, status, 1)
 
@@ -167,7 +167,7 @@ def run():
 
     curated = curated.merge(yield_df[["field_id", "yield_t_ha"]], on="field_id", how="left")
     curated["obs_date"] = curated["obs_date"].dt.strftime("%Y-%m-%d")
-    curated["built_at"] = datetime.utcnow().isoformat()
+    curated["built_at"] = datetime.now(timezone.utc).isoformat()
     curated_to_save = curated[[
         "field_id", "obs_date", "t2m", "precip", "radiation", "humidity", "ndvi",
         "ph", "soc", "clay", "sand", "nitrogen", "yield_t_ha", "built_at"

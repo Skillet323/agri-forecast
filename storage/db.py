@@ -12,7 +12,7 @@
 """
 import sqlite3
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from config import DB_PATH
 
 
@@ -142,8 +142,8 @@ def log_ingestion(run_id, source, field_id, status, rows_written, error_message=
         """INSERT INTO ingestion_log
            (run_id, source, field_id, started_at, finished_at, status, rows_written, error_message)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-        (run_id, source, field_id, started_at or datetime.utcnow().isoformat(),
-         datetime.utcnow().isoformat(), status, rows_written, error_message),
+        (run_id, source, field_id, started_at or datetime.now(timezone.utc).isoformat(),
+         datetime.now(timezone.utc).isoformat(), status, rows_written, error_message),
     )
     conn.commit()
     conn.close()
@@ -155,7 +155,7 @@ def log_quality(run_id, table_name, check_type, check_name, passed, details=""):
         """INSERT INTO quality_check_log
            (run_id, checked_at, table_name, check_type, check_name, passed, details)
            VALUES (?, ?, ?, ?, ?, ?, ?)""",
-        (run_id, datetime.utcnow().isoformat(), table_name, check_type, check_name, int(passed), details),
+        (run_id, datetime.now(timezone.utc).isoformat(), table_name, check_type, check_name, int(passed), details),
     )
     conn.commit()
     conn.close()
