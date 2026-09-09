@@ -32,7 +32,7 @@ from sklearn.preprocessing import StandardScaler
 from config import (
     NATIONAL_REF_POINT, REAL_EXPERIMENT_YEAR_START, REAL_EXPERIMENT_YEAR_END,
 )
-from ingestion import nasa_power, soilgrids, faostat_yield
+from ingestion import nasa_power, soilgrids, faostat_yield, worldbank_yield
 from storage.db import init_db, get_conn, log_ingestion, log_quality, save_raw, upsert_df
 
 OUT_JSON = Path(__file__).parent / "data" / "real_model_results.json"
@@ -42,14 +42,54 @@ EXTENDED_FEATURES = BASELINE_FEATURES + ["mean_radiation", "mean_humidity", "soc
 
 
 def fetch_national_yield(run_id):
-    series, status, raw_payload = faostat_yield.fetch(REAL_EXPERIMENT_YEAR_START, REAL_EXPERIMENT_YEAR_END)
-    save_raw("raw_faostat_yield", "NATIONAL", datetime.now(timezone.utc).isoformat(), raw_payload, status)
-    log_ingestion(run_id, "faostat_yield", "NATIONAL", status, len(series))
-    print(f"FAOSTAT урожайность: статус={status}, лет получено={len(series)}")
+    """
+    Цепочка реальных источников с graceful fallback:
+      1) FAOSTAT (урожайность именно пшеницы) — приоритетный, но на практике
+         может лежать целиком как сторонний сервис (подтверждено 521 от их
+         же Cloudflare, не связано с нашим кодом).
+      2) World Bank (урожайность зерновых КАК ГРУППЫ — не то же самое, что
+         пшеница; используется только если FAOSTAT недоступен, и это ЯВНО
+         фиксируется в статусе/логах, чтобы не перепутать при анализе).
+      3) Синтетика — крайний случай, чтобы демо не останавливалось; для
+         статьи такой результат не годится.
+    """
+    series, status = {}, "failed"
+    raw_payload, source_used = {}, None
+
+    try:
+        payload = faostat_yield.fetch_real(REAL_EXPERIMENT_YEAR_START, REAL_EXPERIMENT_YEAR_END)
+        series = faostat_yield.parse_series(payload)
+        status, raw_payload, source_used = "live", payload, "faostat_wheat"
+    except Exception as e:  # noqa: BLE001
+        print(f"FAOSTAT недоступен ({e}) -> пробуем World Bank (урожайность зерновых, не только пшеницы)")
+        raw_payload = {"_faostat_error": str(e)}
+
+    if not series:
+        try:
+            wb_series, wb_status, wb_payload = worldbank_yield.fetch(REAL_EXPERIMENT_YEAR_START, REAL_EXPERIMENT_YEAR_END)
+            if wb_status == "live":
+                series, status, source_used = wb_series, "live", "worldbank_cereals"
+                raw_payload = {**raw_payload, "worldbank": wb_payload}
+            else:
+                raw_payload = {**raw_payload, "worldbank_error": wb_payload.get("_error")}
+        except Exception as e:  # noqa: BLE001
+            raw_payload = {**raw_payload, "worldbank_error": str(e)}
+
+    if not series:
+        series = faostat_yield._synthetic_series(REAL_EXPERIMENT_YEAR_START, REAL_EXPERIMENT_YEAR_END)
+        status, source_used = "degraded_synthetic", "synthetic_fallback"
+        raw_payload = {**raw_payload, "_synthetic": True}
+
+    save_raw("raw_faostat_yield", "NATIONAL", datetime.now(timezone.utc).isoformat(),
+             {**raw_payload, "_source_used": source_used}, status)
+    log_ingestion(run_id, f"yield::{source_used}", "NATIONAL", status, len(series))
+    print(f"Урожайность: источник={source_used}, статус={status}, лет получено={len(series)}")
     if status == "degraded_synthetic":
-        print("  ПРЕДУПРЕЖДЕНИЕ: это fallback-синтетика (см. текст ошибки ниже) — для статьи нужен status=live.")
-        print(f"  Ошибка: {raw_payload.get('_error')}")
-    return series, status
+        print("  ПРЕДУПРЕЖДЕНИЕ: fallback-синтетика — для статьи нужен status=live.")
+    elif source_used == "worldbank_cereals":
+        print("  ВНИМАНИЕ: это урожайность ЗЕРНОВЫХ В ЦЕЛОМ (World Bank), не пшеницы конкретно —")
+        print("  явно отразить эту замену предмета анализа в статье, если используешь этот результат.")
+    return series, status, source_used
 
 
 def fetch_annual_weather(run_id):
@@ -108,14 +148,14 @@ def fetch_static_soil(run_id):
 
 
 def build_dataset(run_id):
-    yield_series, yield_status = fetch_national_yield(run_id)
+    yield_series, yield_status, yield_source = fetch_national_yield(run_id)
     weather_df, weather_status = fetch_annual_weather(run_id)
     ph, soc, soil_status = fetch_static_soil(run_id)
 
     weather_df["yield_t_ha"] = weather_df["year"].map(yield_series)
     weather_df["ph"] = ph
     weather_df["soc"] = soc
-    weather_df["yield_source_status"] = yield_status
+    weather_df["yield_source_status"] = f"{yield_status}::{yield_source}"
     weather_df["weather_source_status"] = weather_status
     weather_df["soil_source_status"] = soil_status
     weather_df["built_at"] = datetime.now(timezone.utc).isoformat()
@@ -134,7 +174,7 @@ def build_dataset(run_id):
         "mean_radiation", "mean_humidity", "weather_source_status", "ph", "soc",
         "soil_source_status", "built_at",
     ]])
-    return df, {"yield": yield_status, "weather": weather_status, "soil": soil_status}
+    return df, {"yield": yield_status, "yield_source": yield_source, "weather": weather_status, "soil": soil_status}
 
 
 def loyo_cv(df: pd.DataFrame, feature_cols: list[str]):
@@ -179,6 +219,7 @@ def main():
 
     result = {
         "statuses": statuses,
+        "yield_source": statuses.get("yield_source"),
         "n_years": len(df),
         "years_range": [int(df["year"].min()), int(df["year"].max())],
         "baseline_weather_only": baseline,
