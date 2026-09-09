@@ -56,6 +56,14 @@ CREATE TABLE IF NOT EXISTS raw_yield_history (
     PRIMARY KEY (field_id, fetched_at)
 );
 
+CREATE TABLE IF NOT EXISTS raw_faostat_yield (
+    field_id TEXT NOT NULL,
+    fetched_at TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    source_status TEXT NOT NULL,
+    PRIMARY KEY (field_id, fetched_at)
+);
+
 -- STAGING: очищенные типизированные временные ряды, ключ (field_id, obs_date)
 CREATE TABLE IF NOT EXISTS staging_weather (
     field_id TEXT NOT NULL,
@@ -102,6 +110,19 @@ CREATE TABLE IF NOT EXISTS curated_field_daily (
     yield_t_ha REAL,           -- известна только на дату защиты сезона, иначе NULL
     built_at TEXT NOT NULL,
     PRIMARY KEY (field_id, obs_date)
+);
+
+-- Реальный эксперимент для статьи: годовая витрина (страна/репрезентативная точка)
+CREATE TABLE IF NOT EXISTS curated_national_annual (
+    year INTEGER NOT NULL,
+    yield_t_ha REAL,              -- РЕАЛЬНЫЙ, из FAOSTAT
+    yield_source_status TEXT NOT NULL,
+    mean_t2m REAL, sum_precip REAL, mean_radiation REAL, mean_humidity REAL,
+    weather_source_status TEXT NOT NULL,
+    ph REAL, soc REAL,             -- статичны по годам, из SoilGrids
+    soil_source_status TEXT NOT NULL,
+    built_at TEXT NOT NULL,
+    PRIMARY KEY (year)
 );
 
 -- Журнал загрузок

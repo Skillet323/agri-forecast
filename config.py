@@ -36,6 +36,29 @@ NASA_POWER_PARAMS = ["T2M", "PRECTOTCORR", "ALLSKY_SFC_SW_DWN", "RH2M"]  # те�
 SOILGRIDS_URL = "https://rest.isric.org/soilgrids/v2.0/properties/query"
 SOILGRIDS_PROPERTIES = ["phh2o", "soc", "clay", "sand", "nitrogen"]
 
+# --- Реальный эксперимент для статьи: годовой ряд по стране (FAOSTAT) ---
+# ВАЖНО: сеть в песочнице разработки не даёт достучаться до fenixservices.fao.org,
+# поэтому эти константы/парсинг НЕ протестированы вживую и должны быть перепроверены
+# при первом реальном запуске (см. real_experiment.py и README, раздел "Реальный
+# эксперимент"). Если формат ответа FAOSTAT отличается — это будет видно сразу по
+# исключению при парсинге, а не тихо даст неверные числа.
+FAOSTAT_BASE_URL = "https://fenixservices.fao.org/faostat/api/v1/en"
+FAOSTAT_DOMAIN = "QCL"              # Crops and livestock products
+FAOSTAT_AREA_NAME = "Russian Federation"
+FAOSTAT_ITEM_NAME = "Wheat"
+FAOSTAT_ELEMENT_NAME = "Yield"
+
+# Репрезентативная точка для агрегированной "национальной" погоды —
+# упрощение: реальный национальный ряд урожайности сопоставляется с погодой
+# в одном из ключевых зерновых регионов (Краснодарский край), а не с
+# усреднением по всей стране. Это ограничение явно обсуждается в статье.
+NATIONAL_REF_POINT = {"lat": 45.9, "lon": 39.2, "name": "Краснодарский край (репрезентативная точка)"}
+
+REAL_EXPERIMENT_YEAR_START = 2000
+REAL_EXPERIMENT_YEAR_END = 2023   # включительно; FAOSTAT публикует с задержкой ~1-2 года,
+                                    # часть последних лет может отсутствовать в ответе — это нормально
+
+
 # Sentinel-2 требует OAuth-регистрацию в Copernicus Data Space (client_id/secret).
 # В демо-режиме синтезируем NDVI по агрономической логике (рост -> плато -> созревание).
 SENTINEL2_STAC_URL = "https://catalogue.dataspace.copernicus.eu/stac"
