@@ -52,6 +52,24 @@ def check_ranges(run_id, df, ranges: dict, table_name):
                     passed, f"значений вне диапазона: {out_of_range}")
 
 
+def check_admissibility(run_id, df, column, allowed_values, table_name):
+    """
+    Допустимость значений: колонка должна принимать значения ТОЛЬКО из
+    заранее известного конечного множества (в отличие от check_ranges —
+    там числовой диапазон, здесь — категориальный домен). Отдельный от
+    'соответствия типам' тип проверки, как того явно требует методичка.
+    """
+    if column not in df.columns or len(df) == 0:
+        log_quality(run_id, table_name, "admissibility", f"{column}_in_allowed_set",
+                    passed=1, details="колонка отсутствует или пусто — проверка пропущена")
+        return
+    bad_values = set(df[column].dropna().unique()) - set(allowed_values)
+    passed = len(bad_values) == 0
+    log_quality(run_id, table_name, "admissibility", f"{column}_in_allowed_set",
+                passed, f"недопустимые значения: {sorted(bad_values) if bad_values else 'нет'} "
+                        f"(разрешено: {sorted(allowed_values)})")
+
+
 def check_referential_integrity(run_id, child_field_ids, parent_field_ids, table_name):
     """Ссылочная целостность: все field_id в дочерней таблице есть в справочнике полей."""
     missing = set(child_field_ids) - set(parent_field_ids)
