@@ -1,21 +1,19 @@
 """
-РЕАЛЬНЫЙ эксперимент для статьи (в отличие от demo-пайплайна pipeline.py,
-где урожайность на уровне 5 полей — синтетика с нереалистичной калибровкой).
+Годовой контур: страна целиком, один год = одно наблюдение. Запуск: python real_experiment.py
 
-Идея: заменить единицу наблюдения "поле x один сезон" на "страна x год".
-Урожайность пшеницы по РФ — официальная статистика FAOSTAT (реальная, ~20+ лет
-истории). Погодные признаки — тоже реальные (NASA POWER), агрегированные по
-вегетационному периоду каждого года в одной репрезентативной точке. Это даёт:
-  - honestly реальные данные по всем осям (требование пользователя);
-  - n ~ 20-25 лет вместо n=5 полей -> статистически более осмысленная LOYO-CV.
+Зачем отдельно от pipeline.py. В основном конвейере урожайность по каждому полю берётся
+из формулы-заглушки — открытой статистики на уровне поля просто нет. Для выводов, которые
+не стыдно показать, нужна настоящая целевая переменная, поэтому здесь единица наблюдения
+другая: официальная годовая урожайность по стране плюс погода за вегетационный период.
+Заодно выборка вырастает с пяти полей до двух десятков лет, и кросс-валидация начинает
+что-то значить.
 
-Запуск: python real_experiment.py
-Результат: data/real_model_results.json + строки в таблице curated_national_annual.
+Результат: data/real_model_results.json и строки в curated_national_annual.
 
-ВАЖНО: FAOSTAT-часть не протестирована вживую (сеть песочницы блокирует
-fenixservices.fao.org) — при падении на реальном запросе смотри сообщение
-об ошибке в выводе, это будет расхождение в структуре API, а не тихий сбой.
-NASA POWER часть уже подтверждена вживую на этом же проекте.
+Про источники урожайности. Сначала пробуем FAOSTAT (там именно пшеница), при недоступности
+переключаемся на World Bank (там зерновые целиком — это уже другой показатель, и в выводе
+про это написано прямым текстом). Синтетика — только чтобы запуск не падал; для отчёта
+такой результат не годится, о чём предупреждает вывод в консоль.
 """
 import json
 import uuid
@@ -33,7 +31,14 @@ from config import (
     NATIONAL_REF_POINT, REAL_EXPERIMENT_YEAR_START, REAL_EXPERIMENT_YEAR_END,
 )
 from ingestion import nasa_power, soilgrids, faostat_yield, worldbank_yield
-from storage.db import init_db, get_conn, log_ingestion, log_quality, save_raw, upsert_df
+from storage.db import (
+    init_db, get_conn, log_ingestion, log_quality, save_raw, upsert_df,
+    save_yield_revision, save_lineage,
+)
+
+# Домены для проверки допустимости значений.
+ALLOWED_YIELD_SOURCES = {"faostat_wheat", "worldbank_cereals", "synthetic_fallback"}
+ALLOWED_STATUSES = {"live", "degraded_synthetic", "failed"}
 
 OUT_JSON = Path(__file__).parent / "data" / "real_model_results.json"
 
@@ -168,12 +173,34 @@ def build_dataset(run_id):
     log_quality(run_id, "curated_national_annual", "range", "yield_in_range[0.5,8.0]_t_ha",
                 passed=int(df["yield_t_ha"].between(0.5, 8.0).all()),
                 details=f"мин={df['yield_t_ha'].min() if len(df) else None}, макс={df['yield_t_ha'].max() if len(df) else None}")
+    log_quality(run_id, "curated_national_annual", "admissibility", "yield_source_in_allowed_set",
+                passed=int(yield_source in ALLOWED_YIELD_SOURCES),
+                details=f"источник={yield_source}, разрешено: {sorted(ALLOWED_YIELD_SOURCES)}")
+    log_quality(run_id, "curated_national_annual", "admissibility", "source_statuses_in_allowed_set",
+                passed=int({yield_status, weather_status, soil_status} <= ALLOWED_STATUSES),
+                details=f"урожайность={yield_status}, погода={weather_status}, почва={soil_status}")
 
     upsert_df("curated_national_annual", df[[
         "year", "yield_t_ha", "yield_source_status", "mean_t2m", "sum_precip",
         "mean_radiation", "mean_humidity", "weather_source_status", "ph", "soc",
         "soil_source_status", "built_at",
     ]])
+
+    # Витрина хранит последнее значение, а здесь копим все. Статистику по прошлым годам
+    # регулярно уточняют задним числом, и разницу между запусками видно только так.
+    for _, row in df.iterrows():
+        save_yield_revision(int(row["year"]), float(row["yield_t_ha"]), yield_source, run_id)
+        save_lineage(
+            metric_name="national_annual_yield", metric_key=str(int(row["year"])), run_id=run_id,
+            raw_table="raw_faostat_yield", raw_key="NATIONAL", raw_fetched_at=row["built_at"],
+            curated_table="curated_national_annual",
+            transformation_note=(
+                f"{yield_source} за {int(row['year'])} год, перевод кг/га -> т/га; "
+                f"погода NASA POWER за 01.03-15.07 в точке {NATIONAL_REF_POINT['name']}"
+            ),
+            dashboard_panel="Отчёт, раздел «Факт и прогноз по годам»",
+        )
+
     return df, {"yield": yield_status, "yield_source": yield_source, "weather": weather_status, "soil": soil_status}
 
 

@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+.ipynb_checkpoints/
+
+# База пересоздаётся запуском пайплайна, в репозитории ей делать нечего
+data/warehouse.sqlite
+data/*.json
+data/diagrams/
